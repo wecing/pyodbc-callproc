@@ -29,6 +29,8 @@ extern PyObject* null_binary;
 
 extern PyObject* decimal_type;
 
+extern PyObject* sqlparameter_type;
+
 inline bool PyDecimal_Check(PyObject* p)
 {
     return Py_TYPE(p) == (_typeobject*)decimal_type;

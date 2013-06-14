@@ -13,6 +13,14 @@
 #include <datetime.h>
 
 
+
+struct SQLParameter
+{
+    PyObject_HEAD
+    PyObject* value; /* wrapped value */
+    SQLSMALLINT type; /* one of SQL_PARAM_INPUT, SQL_PARAM_INPUT_OUTPUT, SQL_PARAM_OUTPUT, SQL_PARAM_INPUT_OUTPUT_STREAM, SQL_PARAM_OUTPUT_STREAM */
+};
+
 inline Connection* GetConnection(Cursor* cursor)
 {
     return (Connection*)cursor->cnxn;
@@ -59,6 +67,17 @@ static const char* SqlTypeName(SQLSMALLINT n)
         _MAKESTR(SQL_BINARY);
         _MAKESTR(SQL_VARBINARY);
         _MAKESTR(SQL_LONGVARBINARY);
+    }
+    return "unknown";
+}
+
+static const char* CInputOutputName(SQLSMALLINT n)
+{
+    switch (n)
+    {
+        _MAKESTR(SQL_PARAM_INPUT);
+        _MAKESTR(SQL_PARAM_INPUT_OUTPUT);
+        _MAKESTR(SQL_PARAM_OUTPUT);
     }
     return "unknown";
 }
@@ -110,6 +129,12 @@ static const char* CTypeName(SQLSMALLINT n)
     return "unknown";
 }
 
+static PyObject* ToNullInfo(const ParamInfo* info)
+{
+    (void)info;
+    Py_RETURN_NONE;
+}
+
 static bool GetNullInfo(Cursor* cur, Py_ssize_t index, ParamInfo& info)
 {
     if (!GetParamType(cur, index, info.ParameterType))
@@ -118,7 +143,17 @@ static bool GetNullInfo(Cursor* cur, Py_ssize_t index, ParamInfo& info)
     info.ValueType     = SQL_C_DEFAULT;
     info.ColumnSize    = 1;
     info.StrLen_or_Ind = SQL_NULL_DATA;
+
+    info.fnToPyObject = ToNullInfo;
     return true;
+}
+
+static PyObject* ToNullBinaryInfo(const ParamInfo* info)
+{
+    (void)info;
+
+    Py_INCREF(null_binary);
+    return null_binary;
 }
 
 static bool GetNullBinaryInfo(Cursor* cur, Py_ssize_t index, ParamInfo& info)
@@ -128,7 +163,14 @@ static bool GetNullBinaryInfo(Cursor* cur, Py_ssize_t index, ParamInfo& info)
     info.ColumnSize        = 1;
     info.ParameterValuePtr = 0;
     info.StrLen_or_Ind     = SQL_NULL_DATA;
+
+    info.fnToPyObject = ToNullBinaryInfo;
     return true;
+}
+
+
+static PyObject* ToBytesInfo(const ParamInfo* info)
+{
 }
 
 
@@ -174,6 +216,8 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
         info.ParameterValuePtr = param;
     }
 #endif
+
+    info.fnToPyObject = ToBytesInfo;
 
     return true;
 }
@@ -296,6 +340,11 @@ static bool GetTimeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInf
     return true;
 }
 
+static PyObject* ToIntInfo(const ParamInfo* info)
+{
+    return PyInt_FromLong(info->Data.l);
+}
+
 #if PY_MAJOR_VERSION < 3
 static bool GetIntInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
 {
@@ -312,9 +361,18 @@ static bool GetIntInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo
 #endif
 
     info.ParameterValuePtr = &info.Data.l;
+    info.BufferLength      = sizeof(info.Data.l);
+    info.StrLen_or_Ind     = sizeof(info.Data.l);
+
+    info.fnToPyObject = ToIntInfo;
     return true;
 }
 #endif
+
+static PyObject* ToLongInfo(const ParamInfo* info)
+{
+    return PyLong_FromLongLong(info->Data.i64);
+}
 
 static bool GetLongInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
 {
@@ -324,6 +382,11 @@ static bool GetLongInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInf
     info.ValueType         = SQL_C_SBIGINT;
     info.ParameterType     = SQL_BIGINT;
     info.ParameterValuePtr = &info.Data.i64;
+    info.BufferLength      = sizeof(info.Data.i64);
+    info.StrLen_or_Ind     = sizeof(info.Data.i64);
+
+    info.fnToPyObject = ToLongInfo;
+
     return true;
 }
 
@@ -335,6 +398,8 @@ static bool GetFloatInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     info.ValueType         = SQL_C_DOUBLE;
     info.ParameterType     = SQL_DOUBLE;
     info.ParameterValuePtr = &info.Data.dbl;
+    info.StrLen_or_Ind     = sizeof(info.Data.dbl);
+    info.BufferLength      = sizeof(info.Data.dbl);
     info.ColumnSize = 15;
     return true;
 }
@@ -535,68 +600,79 @@ static bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
     //
     // Populates `info`.
 
-    // Hold a reference to param until info is freed, because info will often be holding data borrowed from param.
-    info.pParam = param;
+    // TODO: if the param is a SQLParameter object, then bind to the wrapped value and use the input/output type from that
 
-    if (param == Py_None)
+    // Hold a reference to param until info is freed, because info will often be holding data borrowed from param.
+    if (PyObject_TypeCheck(param, (PyTypeObject*)SQLParameter_type))
+    {
+        info.pParam = ((SQLParameter*)param)->value;
+        info.InputOutputType = ((SQLParameter*)param)->type;
+    }
+    else
+    {
+        info.pParam = param;
+        info.InputOutputType = SQL_PARAM_INPUT;
+    }
+
+    if (info.pParam == Py_None)
         return GetNullInfo(cur, index, info);
 
-    if (param == null_binary)
+    if (info.pParam == null_binary)
         return GetNullBinaryInfo(cur, index, info);
 
-    if (PyBytes_Check(param))
-        return GetBytesInfo(cur, index, param, info);
+    if (PyBytes_Check(info.pParam))
+        return GetBytesInfo(cur, index, info.pParam, info);
 
-    if (PyUnicode_Check(param))
-        return GetUnicodeInfo(cur, index, param, info);
+    if (PyUnicode_Check(info.pParam))
+        return GetUnicodeInfo(cur, index, info.pParam, info);
 
-    if (PyBool_Check(param))
-        return GetBooleanInfo(cur, index, param, info);
+    if (PyBool_Check(info.pParam))
+        return GetBooleanInfo(cur, index, info.pParam, info);
 
-    if (PyDateTime_Check(param))
-        return GetDateTimeInfo(cur, index, param, info);
+    if (PyDateTime_Check(info.pParam))
+        return GetDateTimeInfo(cur, index, info.pParam, info);
 
-    if (PyDate_Check(param))
-        return GetDateInfo(cur, index, param, info);
+    if (PyDate_Check(info.pParam))
+        return GetDateInfo(cur, index, info.pParam, info);
 
-    if (PyTime_Check(param))
-        return GetTimeInfo(cur, index, param, info);
+    if (PyTime_Check(info.pParam))
+        return GetTimeInfo(cur, index, info.pParam, info);
 
-    if (PyLong_Check(param))
-        return GetLongInfo(cur, index, param, info);
+    if (PyLong_Check(info.pParam))
+        return GetLongInfo(cur, index, info.pParam, info);
 
-    if (PyFloat_Check(param))
-        return GetFloatInfo(cur, index, param, info);
+    if (PyFloat_Check(info.pParam))
+        return GetFloatInfo(cur, index, info.pParam, info);
 
-    if (PyDecimal_Check(param))
-        return GetDecimalInfo(cur, index, param, info);
+    if (PyDecimal_Check(info.pParam))
+        return GetDecimalInfo(cur, index, info.pParam, info);
 
 #if PY_VERSION_HEX >= 0x02060000
-    if (PyByteArray_Check(param))
-        return GetByteArrayInfo(cur, index, param, info);
+    if (PyByteArray_Check(info.pParam))
+        return GetByteArrayInfo(cur, index, info.pParam, info);
 #endif
 
 #if PY_MAJOR_VERSION < 3
-    if (PyInt_Check(param))
-        return GetIntInfo(cur, index, param, info);
+    if (PyInt_Check(info.pParam))
+        return GetIntInfo(cur, index, info.pParam, info);
 
-    if (PyBuffer_Check(param))
-        return GetBufferInfo(cur, index, param, info);
+    if (PyBuffer_Check(info.pParam))
+        return GetBufferInfo(cur, index, info.pParam, info);
 #endif
 
-    RaiseErrorV("HY105", ProgrammingError, "Invalid parameter type.  param-index=%zd param-type=%s", index, Py_TYPE(param)->tp_name);
+    RaiseErrorV("HY105", ProgrammingError, "Invalid parameter type.  param-index=%zd param-type=%s", index, Py_TYPE(info.pParam)->tp_name);
     return false;
 }
 
 bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
 {
-    TRACE("BIND: param=%d ValueType=%d (%s) ParameterType=%d (%s) ColumnSize=%d DecimalDigits=%d BufferLength=%d *pcb=%d\n",
-          (index+1), info.ValueType, CTypeName(info.ValueType), info.ParameterType, SqlTypeName(info.ParameterType), info.ColumnSize,
+    TRACE("BIND: param=%d InputOutputType=%d (%s) ValueType=%d (%s) ParameterType=%d (%s) ColumnSize=%d DecimalDigits=%d BufferLength=%d *pcb=%d\n",
+          (index+1), info.InputOutputType, CInputOutputName(info.InputOutputType), info.ValueType, CTypeName(info.ValueType), info.ParameterType, SqlTypeName(info.ParameterType), info.ColumnSize,
           info.DecimalDigits, info.BufferLength, info.StrLen_or_Ind);
 
     SQLRETURN ret = -1;
     Py_BEGIN_ALLOW_THREADS
-    ret = SQLBindParameter(cur->hstmt, (SQLUSMALLINT)(index + 1), SQL_PARAM_INPUT, info.ValueType, info.ParameterType, info.ColumnSize, info.DecimalDigits, info.ParameterValuePtr, info.BufferLength, &info.StrLen_or_Ind);
+    ret = SQLBindParameter(cur->hstmt, (SQLUSMALLINT)(index + 1), info.InputOutputType, info.ValueType, info.ParameterType, info.ColumnSize, info.DecimalDigits, info.ParameterValuePtr, info.BufferLength, &info.StrLen_or_Ind);
     Py_END_ALLOW_THREADS;
 
     if (GetConnection(cur)->hdbc == SQL_NULL_HANDLE)
@@ -645,6 +721,54 @@ void FreeParameterInfo(Cursor* cur)
     cur->pPreparedSQL = 0;
     cur->paramtypes   = 0;
     cur->paramcount   = 0;
+}
+
+bool BindParams(Cursor* cur, PyObject* original_params, bool skip_first)
+{
+    int        params_offset = skip_first ? 1 : 0;
+    Py_ssize_t cParams       = original_params == 0 ? 0 : PySequence_Length(original_params) - params_offset;
+
+    cur->paramInfos = (ParamInfo*)pyodbc_malloc(sizeof(ParamInfo) * cParams);
+    if (cur->paramInfos == 0)
+    {
+        PyErr_NoMemory();
+        return 0;
+    }
+    memset(cur->paramInfos, 0, sizeof(ParamInfo) * cParams);
+
+    // Since you can't call SQLDesribeParam *after* calling SQLBindParameter, we'll loop through all of the
+    // GetParameterInfos first, then bind.
+
+    for (Py_ssize_t i = 0; i < cParams; i++)
+    {
+        // PySequence_GetItem returns a *new* reference, which GetParameterInfo will take ownership of.  It is stored
+        // in paramInfos and will be released in FreeInfos (which is always eventually called).
+
+        PyObject* param = PySequence_GetItem(original_params, i + params_offset);
+        if (!GetParameterInfo(cur, i, param, cur->paramInfos[i]))
+        {
+            FreeInfos(cur->paramInfos, cParams);
+            cur->paramInfos = 0;
+            return false;
+        }
+    }
+
+    for (Py_ssize_t i = 0; i < cParams; i++)
+    {
+        if (!BindParameter(cur, i, cur->paramInfos[i]))
+        {
+            FreeInfos(cur->paramInfos, cParams);
+            cur->paramInfos = 0;
+            return false;
+        }
+    }
+
+    // This is hacky. It is typically set by PrepareAndBind, which also calls SQLNumParams to verify
+    // that the number of supplied params matches the number of parameter markers in the prepared
+    // statement.
+    cur->paramcount = cParams;
+
+    return true;
 }
 
 bool PrepareAndBind(Cursor* cur, PyObject* pSql, PyObject* original_params, bool skip_first)
@@ -732,42 +856,7 @@ bool PrepareAndBind(Cursor* cur, PyObject* pSql, PyObject* original_params, bool
         return false;
     }
 
-    cur->paramInfos = (ParamInfo*)pyodbc_malloc(sizeof(ParamInfo) * cParams);
-    if (cur->paramInfos == 0)
-    {
-        PyErr_NoMemory();
-        return 0;
-    }
-    memset(cur->paramInfos, 0, sizeof(ParamInfo) * cParams);
-
-    // Since you can't call SQLDesribeParam *after* calling SQLBindParameter, we'll loop through all of the
-    // GetParameterInfos first, then bind.
-
-    for (Py_ssize_t i = 0; i < cParams; i++)
-    {
-        // PySequence_GetItem returns a *new* reference, which GetParameterInfo will take ownership of.  It is stored
-        // in paramInfos and will be released in FreeInfos (which is always eventually called).
-
-        PyObject* param = PySequence_GetItem(original_params, i + params_offset);
-        if (!GetParameterInfo(cur, i, param, cur->paramInfos[i]))
-        {
-            FreeInfos(cur->paramInfos, cParams);
-            cur->paramInfos = 0;
-            return false;
-        }
-    }
-
-    for (Py_ssize_t i = 0; i < cParams; i++)
-    {
-        if (!BindParameter(cur, i, cur->paramInfos[i]))
-        {
-            FreeInfos(cur->paramInfos, cParams);
-            cur->paramInfos = 0;
-            return false;
-        }
-    }
-
-    return true;
+    return BindParams(cur, original_params, skip_first);
 }
 
 static bool GetParamType(Cursor* cur, Py_ssize_t index, SQLSMALLINT& type)
@@ -854,6 +943,110 @@ PyTypeObject NullParamType =
 
 PyObject* null_binary;
 
+static const char* SQLParameter_doc = "TODO";
+
+static PyMemberDef SQLParameter_members[] = {
+    { "value", T_OBJECT_EX, offsetof(SQLParameter, value), 0, "parameter value" },
+    { "type",  T_INT, offsetof(SQLParameter, type), 0, "parameter type" },
+    { NULL } /* Sentinel */
+};
+
+static int SQLParameter_clear(SQLParameter* self)
+{
+    Py_CLEAR(self);
+    return 0;
+}
+
+static void SQLParameter_dealloc(SQLParameter* self)
+{
+    SQLParameter_clear(self);
+    self->ob_type->tp_free((PyObject*)self);
+}
+
+static PyObject* SQLParameter_new(PyTypeObject* type, PyObject* args, PyObject* kwds)
+{
+    SQLParameter* self = (SQLParameter*)type->tp_alloc(type, 0);
+    if (self != NULL)
+    {
+        Py_INCREF(Py_None);
+        self->value = Py_None;
+
+        self->type = SQL_PARAM_TYPE_DEFAULT;
+    }
+
+    return (PyObject*)self;
+}
+
+static int SQLParameter_init(SQLParameter* self, PyObject* args, PyObject* kwds)
+{
+    PyObject* value = NULL;
+    PyObject* tmp;
+
+    static char* kwlist[] = { "value", "type", NULL };
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|i", kwlist,
+                                     &value, &self->type))
+    {
+        return -1;
+    }
+
+    if (value)
+    {
+        tmp = self->value;
+        Py_INCREF(value);
+        self->value = value;
+        Py_XDECREF(tmp);
+    }
+
+    return 0;
+}
+
+static PyTypeObject SQLParameterType =
+{
+    PyObject_HEAD_INIT(NULL)
+    0,                       /* ob_size */
+    "pyodbc.SQLParameter",   /* tp_name */
+    sizeof(SQLParameter),    /* tp_basicsize */
+    0,                       /* tp_itemsize */
+    (destructor)SQLParameter_dealloc, /* tp_dealloc */
+    0,                       /* tp_print */
+    0,                       /* tp_getattr */
+    0,                       /* tp_setattr */
+    0,                       /* tp_compare */
+    0,                       /* tp_repr */
+    0,                       /* tp_as_number */
+    0,                       /* tp_as_sequence */
+    0,                       /* tp_as_mapping */
+    0,                       /* tp_hash */
+    0,                       /* tp_call */
+    0,                       /* tp_str */
+    0,                       /* tp_getattro */
+    0,                       /* tp_setattro */
+    0,                       /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT |
+      Py_TPFLAGS_BASETYPE,   /* tp_flags */
+    SQLParameter_doc,        /* tp_doc */
+    0,                       /* tp_traverse */
+    (inquiry)SQLParameter_clear, /* tp_clear */
+    0,                       /* tp_richcompare */
+    0,                       /* tp_weaklistoffset */
+    0,                       /* tp_iter */
+    0,                       /* tp_iternext */
+    0,                       /* tp_methods */
+    SQLParameter_members,    /* tp_members */
+    0,                       /* tp_getset */
+    0,                       /* tp_base */
+    0,                       /* tp_dict */
+    0,                       /* tp_descr_get */
+    0,                       /* tp_descr_set */
+    0,                       /* tp_dictoffset */
+    (initproc)SQLParameter_init, /* tp_init */
+    0,                       /* tp_alloc */
+    (newfunc)SQLParameter_new, /* tp_new */
+};
+
+PyObject* SQLParameter_type = 0;
+
 bool Params_init()
 {
     if (PyType_Ready(&NullParamType) < 0)
@@ -862,6 +1055,11 @@ bool Params_init()
     null_binary = (PyObject*)PyObject_New(NullParam, &NullParamType);
     if (null_binary == 0)
         return false;
+
+    if (PyType_Ready(&SQLParameterType) < 0)
+        return false;
+    Py_INCREF(&SQLParameterType);
+    SQLParameter_type = (PyObject*)&SQLParameterType;
 
     PyDateTime_IMPORT;
 

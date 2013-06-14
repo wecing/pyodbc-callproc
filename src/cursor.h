@@ -37,6 +37,7 @@ struct ColumnInfo
 struct ParamInfo
 {
     // The following correspond to the SQLBindParameter parameters.
+    SQLSMALLINT InputOutputType;
     SQLSMALLINT ValueType;
     SQLSMALLINT ParameterType;
     SQLULEN     ColumnSize;
@@ -67,6 +68,12 @@ struct ParamInfo
         DATE_STRUCT date;
         TIME_STRUCT time;
     } Data;
+
+    // Method to generate a python object from (this) ParamInfo.
+    // This is used to convert a ParamInfo back to a PyObject.
+    // Note: A reference is added to the returned object. The caller
+    // is expected to release it.
+    PyObject* (*fnToPyObject)(const ParamInfo* info);
 };
 
 struct Cursor

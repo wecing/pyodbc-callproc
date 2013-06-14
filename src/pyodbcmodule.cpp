@@ -986,6 +986,9 @@ initpyodbc(void)
     I(null_binary != 0);        // must be initialized first
     PyModule_AddObject(module, "BinaryNull", null_binary);
 
+    Py_INCREF(SQLParameter_type);
+    PyModule_AddObject(module, "SQLParameter", SQLParameter_type);
+
     PyModule_AddIntConstant(module, "UNICODE_SIZE", sizeof(Py_UNICODE));
     PyModule_AddIntConstant(module, "SQLWCHAR_SIZE", sizeof(SQLWCHAR));
 
