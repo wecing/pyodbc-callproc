@@ -13,6 +13,8 @@
 #include <datetime.h>
 
 
+#include <string.h>
+
 
 struct SQLParameter
 {
@@ -171,6 +173,11 @@ static bool GetNullBinaryInfo(Cursor* cur, Py_ssize_t index, ParamInfo& info)
 
 static PyObject* ToBytesInfo(const ParamInfo* info)
 {
+    // FIXME: incref?
+
+    PyObject* r = PyString_FromString((const char *)info->ParameterValuePtr);
+    Py_INCREF(r);
+    return r;
 }
 
 
@@ -184,18 +191,17 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     info.ValueType = SQL_C_BINARY;
     info.ColumnSize = (SQLUINTEGER)max(len, 1);
 
+    // FIXME: py3 mode
     if (len <= cur->cnxn->binary_maxlength)
     {
         info.ParameterType     = SQL_VARBINARY;
         info.StrLen_or_Ind     = len;
-        info.ParameterValuePtr = PyBytes_AS_STRING(param);
     }
     else
     {
         // Too long to pass all at once, so we'll provide the data at execute.
         info.ParameterType     = SQL_LONGVARBINARY;
         info.StrLen_or_Ind     = cur->cnxn->need_long_data_len ? SQL_LEN_DATA_AT_EXEC((SQLLEN)len) : SQL_DATA_AT_EXEC;
-        info.ParameterValuePtr = param;
     }
 
 #else
@@ -204,18 +210,26 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
 
     if (len <= cur->cnxn->varchar_maxlength)
     {
+        printf("branch AAAAAA\n"); // FIXME
         info.ParameterType     = SQL_VARCHAR;
         info.StrLen_or_Ind     = len;
-        info.ParameterValuePtr = PyBytes_AS_STRING(param);
+        info.ParameterValuePtr = strdup(PyBytes_AS_STRING(param));
+        info.BufferLength = strlen((char*)info.ParameterValuePtr)+1;
+        info.allocated = true;
     }
     else
     {
+        printf("branch BBBBBB\n"); // FIXME
         // Too long to pass all at once, so we'll provide the data at execute.
         info.ParameterType     = SQL_LONGVARCHAR;
         info.StrLen_or_Ind     = cur->cnxn->need_long_data_len ? SQL_LEN_DATA_AT_EXEC((SQLLEN)len) : SQL_DATA_AT_EXEC;
-        info.ParameterValuePtr = param;
+        info.ParameterValuePtr = param; // FIXME: dafuq?
     }
 #endif
+
+    printf("ParameterValuePtr: %p\n", info.ParameterValuePtr);
+    printf("ColumnSize: %d\n", (int)info.ColumnSize);
+    printf("*StrLen_or_Ind: %d\n", (int)info.StrLen_or_Ind);
 
     info.fnToPyObject = ToBytesInfo;
 
@@ -606,11 +620,13 @@ static bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
     if (PyObject_TypeCheck(param, (PyTypeObject*)SQLParameter_type))
     {
         info.pParam = ((SQLParameter*)param)->value;
+        Py_INCREF(info.pParam);
         info.InputOutputType = ((SQLParameter*)param)->type;
     }
     else
     {
         info.pParam = param;
+        Py_INCREF(info.pParam);
         info.InputOutputType = SQL_PARAM_INPUT;
     }
 
@@ -623,11 +639,11 @@ static bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
     if (PyBytes_Check(info.pParam))
         return GetBytesInfo(cur, index, info.pParam, info);
 
-    if (PyUnicode_Check(info.pParam))
-        return GetUnicodeInfo(cur, index, info.pParam, info);
-
     if (PyBool_Check(info.pParam))
         return GetBooleanInfo(cur, index, info.pParam, info);
+
+    if (PyUnicode_Check(info.pParam))
+        return GetUnicodeInfo(cur, index, info.pParam, info);
 
     if (PyDateTime_Check(info.pParam))
         return GetDateTimeInfo(cur, index, info.pParam, info);

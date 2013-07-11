@@ -810,6 +810,12 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
         return 0;
     }
 
+    // FIXME: dafuq?
+    // free_results(cursor, FREE_STATEMENT | KEEP_PREPARED);
+    SQLFreeStmt(cursor->hstmt, SQL_CLOSE);
+    SQLFreeStmt(cursor->hstmt, SQL_CLOSE); // FIXME: dafuq? why do I have to call it twice?
+    SQLFreeStmt(cursor->hstmt, SQL_RESET_PARAMS);
+
     PyObject* pProcName = PyTuple_GET_ITEM(args, 0);
 
     if (!PyString_Check(pProcName) && !PyUnicode_Check(pProcName))
@@ -992,6 +998,13 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
     }
     pyodbc_free(pszParameterList);
 
+    // FIXME: what about SQL_RESET_PARAMS?
+    //
+    // SQLFreeStmt(cursor->hstmt, SQL_CLOSE);
+    // SQLFreeStmt(cursor->hstmt, SQL_CLOSE);
+    // SQLFreeStmt(((Cursor*)self)->hstmt, SQL_CLOSE);
+    //
+    // SQLFreeStmt(cursor->hstmt, SQL_RESET_PARAMS);
     return pReturn;
 }
 
