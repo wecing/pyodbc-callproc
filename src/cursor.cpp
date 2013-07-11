@@ -814,7 +814,7 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
     // free_results(cursor, FREE_STATEMENT | KEEP_PREPARED);
     SQLFreeStmt(cursor->hstmt, SQL_CLOSE);
     SQLFreeStmt(cursor->hstmt, SQL_CLOSE); // FIXME: dafuq? why do I have to call it twice?
-    SQLFreeStmt(cursor->hstmt, SQL_RESET_PARAMS);
+    // SQLFreeStmt(cursor->hstmt, SQL_RESET_PARAMS); // FIXME: when this is needed?
 
     PyObject* pProcName = PyTuple_GET_ITEM(args, 0);
 

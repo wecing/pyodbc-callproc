@@ -173,11 +173,7 @@ static bool GetNullBinaryInfo(Cursor* cur, Py_ssize_t index, ParamInfo& info)
 
 static PyObject* ToBytesInfo(const ParamInfo* info)
 {
-    // FIXME: incref?
-
-    PyObject* r = PyString_FromString((const char *)info->ParameterValuePtr);
-    Py_INCREF(r);
-    return r;
+    return PyString_FromString((const char *)info->ParameterValuePtr);
 }
 
 
@@ -210,7 +206,6 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
 
     if (len <= cur->cnxn->varchar_maxlength)
     {
-        printf("branch AAAAAA\n"); // FIXME
         info.ParameterType     = SQL_VARCHAR;
         info.StrLen_or_Ind     = len;
         info.ParameterValuePtr = strdup(PyBytes_AS_STRING(param));
@@ -219,20 +214,14 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     }
     else
     {
-        printf("branch BBBBBB\n"); // FIXME
         // Too long to pass all at once, so we'll provide the data at execute.
         info.ParameterType     = SQL_LONGVARCHAR;
         info.StrLen_or_Ind     = cur->cnxn->need_long_data_len ? SQL_LEN_DATA_AT_EXEC((SQLLEN)len) : SQL_DATA_AT_EXEC;
-        info.ParameterValuePtr = param; // FIXME: dafuq?
+        info.ParameterValuePtr = param; // FIXME: dafuq? incref again?
     }
 #endif
 
-    printf("ParameterValuePtr: %p\n", info.ParameterValuePtr);
-    printf("ColumnSize: %d\n", (int)info.ColumnSize);
-    printf("*StrLen_or_Ind: %d\n", (int)info.StrLen_or_Ind);
-
     info.fnToPyObject = ToBytesInfo;
-
     return true;
 }
 
@@ -782,7 +771,7 @@ bool BindParams(Cursor* cur, PyObject* original_params, bool skip_first)
     // This is hacky. It is typically set by PrepareAndBind, which also calls SQLNumParams to verify
     // that the number of supplied params matches the number of parameter markers in the prepared
     // statement.
-    cur->paramcount = cParams;
+    cur->paramcount = (int)cParams;
 
     return true;
 }
