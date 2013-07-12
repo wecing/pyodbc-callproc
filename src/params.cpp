@@ -184,6 +184,10 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     Py_ssize_t len = PyBytes_GET_SIZE(param);
 
 #if PY_MAJOR_VERSION >= 3
+
+// oh yeah.
+#error "pyodbc-callproc doesn't support python3 yet"
+
     info.ValueType = SQL_C_BINARY;
     info.ColumnSize = (SQLUINTEGER)max(len, 1);
 
@@ -217,7 +221,7 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
         // Too long to pass all at once, so we'll provide the data at execute.
         info.ParameterType     = SQL_LONGVARCHAR;
         info.StrLen_or_Ind     = cur->cnxn->need_long_data_len ? SQL_LEN_DATA_AT_EXEC((SQLLEN)len) : SQL_DATA_AT_EXEC;
-        info.ParameterValuePtr = param; // FIXME: dafuq? incref again?
+        info.ParameterValuePtr = param;
     }
 #endif
 
