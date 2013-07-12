@@ -280,6 +280,12 @@ static bool GetBooleanInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
     return true;
 }
 
+static PyObject* ToDateTimeInfo(const ParamInfo* info) {
+    // each unit in fraction is one billionth of one second. python uses microsecond instead.
+    const TIMESTAMP_STRUCT *p = &(info->Data.timestamp);
+    return PyDateTime_FromDateAndTime(p->year, p->month,  p->day, p->hour, p->minute, p->second, p->fraction / 1000);
+}
+
 static bool GetDateTimeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
 {
     info.Data.timestamp.year   = (SQLSMALLINT) PyDateTime_GET_YEAR(param);
@@ -312,7 +318,13 @@ static bool GetDateTimeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Para
     info.ColumnSize        = (SQLUINTEGER)((Connection*)cur->cnxn)->datetime_precision;
     info.StrLen_or_Ind     = sizeof(TIMESTAMP_STRUCT);
     info.ParameterValuePtr = &info.Data.timestamp;
+
+    info.fnToPyObject = ToDateTimeInfo;
     return true;
+}
+
+static PyObject* ToDateInfo(const ParamInfo* info) {
+    return PyDate_FromDate(info->Data.date.year, info->Data.date.month, info->Data.date.day);
 }
 
 static bool GetDateInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
@@ -326,7 +338,13 @@ static bool GetDateInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInf
     info.ColumnSize        = 10;
     info.ParameterValuePtr = &info.Data.date;
     info.StrLen_or_Ind     = sizeof(DATE_STRUCT);
+
+    info.fnToPyObject = ToDateInfo;
     return true;
+}
+
+static PyObject* ToTimeInfo(const ParamInfo* info) {
+    return PyTime_FromTime(info->Data.time.hour, info->Data.time.minute, info->Data.time.second, 0);
 }
 
 static bool GetTimeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
@@ -340,6 +358,8 @@ static bool GetTimeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInf
     info.ColumnSize        = 8;
     info.ParameterValuePtr = &info.Data.time;
     info.StrLen_or_Ind     = sizeof(TIME_STRUCT);
+
+    info.fnToPyObject = ToTimeInfo;
     return true;
 }
 
@@ -602,8 +622,6 @@ static bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
     // Determines the type of SQL parameter that will be used for this parameter based on the Python data type.
     //
     // Populates `info`.
-
-    // TODO: if the param is a SQLParameter object, then bind to the wrapped value and use the input/output type from that
 
     // Hold a reference to param until info is freed, because info will often be holding data borrowed from param.
     if (PyObject_TypeCheck(param, (PyTypeObject*)SQLParameter_type))
