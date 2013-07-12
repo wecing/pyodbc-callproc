@@ -818,6 +818,21 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
 
     PyObject* pProcName = PyTuple_GET_ITEM(args, 0);
 
+    // FIXME: incref/decref?
+    bool paramsInTuple = false;
+    if (cParams > 0) {
+        PyObject *t = PyTuple_GET_ITEM(args, 1);
+        if (PyTuple_Check(t)) {
+            paramsInTuple = true;
+            args = t;
+            if (cParams != 1) {
+                PyErr_SetString(PyExc_TypeError, "callproc() takes no more than two arguments when the second is a tuple.");
+                return 0;
+            }
+            cParams = PyTuple_Size(args);
+        }
+    }
+
     if (!PyString_Check(pProcName) && !PyUnicode_Check(pProcName))
     {
         PyErr_SetString(PyExc_TypeError, "The first argument to callproc must be a string or unicode stored procedure name.");
@@ -851,7 +866,7 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
     {
         TRACE("cursor.callproc: %s\n", PyString_AS_STRING(pCallStatement));
 
-        if (!BindParams(cursor, args, true /* skip_first */))
+        if (!BindParams(cursor, args, !paramsInTuple /* skip_first */))
             return 0;
 
         SQLRETURN ret = 0;

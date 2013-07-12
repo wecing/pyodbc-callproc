@@ -280,7 +280,8 @@ static bool GetBooleanInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
     return true;
 }
 
-static PyObject* ToDateTimeInfo(const ParamInfo* info) {
+static PyObject* ToDateTimeInfo(const ParamInfo* info)
+{
     // each unit in fraction is one billionth of one second. python uses microsecond instead.
     const TIMESTAMP_STRUCT *p = &(info->Data.timestamp);
     return PyDateTime_FromDateAndTime(p->year, p->month,  p->day, p->hour, p->minute, p->second, p->fraction / 1000);
@@ -323,7 +324,8 @@ static bool GetDateTimeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Para
     return true;
 }
 
-static PyObject* ToDateInfo(const ParamInfo* info) {
+static PyObject* ToDateInfo(const ParamInfo* info)
+{
     return PyDate_FromDate(info->Data.date.year, info->Data.date.month, info->Data.date.day);
 }
 
@@ -343,7 +345,8 @@ static bool GetDateInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInf
     return true;
 }
 
-static PyObject* ToTimeInfo(const ParamInfo* info) {
+static PyObject* ToTimeInfo(const ParamInfo* info)
+{
     return PyTime_FromTime(info->Data.time.hour, info->Data.time.minute, info->Data.time.second, 0);
 }
 
