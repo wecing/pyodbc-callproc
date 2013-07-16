@@ -814,11 +814,14 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
     // free_results(cursor, FREE_STATEMENT | KEEP_PREPARED);
     SQLFreeStmt(cursor->hstmt, SQL_CLOSE);
     SQLFreeStmt(cursor->hstmt, SQL_CLOSE); // FIXME: dafuq? why do I have to call it twice?
-    // SQLFreeStmt(cursor->hstmt, SQL_RESET_PARAMS); // FIXME: when this is needed?
 
     PyObject* pProcName = PyTuple_GET_ITEM(args, 0);
+    if (!PyString_Check(pProcName) && !PyUnicode_Check(pProcName))
+    {
+        PyErr_SetString(PyExc_TypeError, "The first argument to callproc must be a string or unicode stored procedure name.");
+        return 0;
+    }
 
-    // FIXME: incref/decref?
     bool paramsInTuple = false;
     if (cParams > 0) {
         PyObject *t = PyTuple_GET_ITEM(args, 1);
@@ -831,12 +834,6 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
             }
             cParams = PyTuple_Size(args);
         }
-    }
-
-    if (!PyString_Check(pProcName) && !PyUnicode_Check(pProcName))
-    {
-        PyErr_SetString(PyExc_TypeError, "The first argument to callproc must be a string or unicode stored procedure name.");
-        return 0;
     }
 
     // Construct the call statement.
@@ -1013,13 +1010,6 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
     }
     pyodbc_free(pszParameterList);
 
-    // FIXME: what about SQL_RESET_PARAMS?
-    //
-    // SQLFreeStmt(cursor->hstmt, SQL_CLOSE);
-    // SQLFreeStmt(cursor->hstmt, SQL_CLOSE);
-    // SQLFreeStmt(((Cursor*)self)->hstmt, SQL_CLOSE);
-    //
-    // SQLFreeStmt(cursor->hstmt, SQL_RESET_PARAMS);
     return pReturn;
 }
 

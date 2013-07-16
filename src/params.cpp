@@ -21,6 +21,7 @@ struct SQLParameter
     PyObject_HEAD
     PyObject* value; /* wrapped value */
     SQLSMALLINT type; /* one of SQL_PARAM_INPUT, SQL_PARAM_INPUT_OUTPUT, SQL_PARAM_OUTPUT, SQL_PARAM_INPUT_OUTPUT_STREAM, SQL_PARAM_OUTPUT_STREAM */
+    int ostr_len;
 };
 
 inline Connection* GetConnection(Cursor* cursor)
@@ -177,7 +178,7 @@ static PyObject* ToBytesInfo(const ParamInfo* info)
 }
 
 
-static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
+static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info, int ostr_len)
 {
     // In Python 2, a bytes object (ANSI string) is passed as varchar.  In Python 3, it is passed as binary.
 
@@ -210,11 +211,30 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
 
     if (len <= cur->cnxn->varchar_maxlength)
     {
-        info.ParameterType     = SQL_VARCHAR;
-        info.StrLen_or_Ind     = len;
-        info.ParameterValuePtr = strdup(PyBytes_AS_STRING(param));
-        info.BufferLength = strlen((char*)info.ParameterValuePtr)+1;
-        info.allocated = true;
+        // FIXME: INPUT_STREAM & INPUT_OUTPUT_STREAM are not supported in unixODBC for now.
+        if (info.InputOutputType == SQL_PARAM_INPUT) {
+            info.ParameterType = SQL_VARCHAR;
+            info.StrLen_or_Ind = len;
+            info.BufferLength = len + 1; // should not be used?
+            info.ParameterValuePtr = PyBytes_AS_STRING(param);
+        } else {
+            if (ostr_len < len) {
+                ostr_len = (int)len;
+            }
+            void *buf = (void *)malloc(ostr_len + 1);
+            if (info.InputOutputType == SQL_PARAM_INPUT_OUTPUT) {
+                memcpy(buf, PyBytes_AS_STRING(param), len + 1);
+            } else {
+                ((char*)buf)[0] = '\0';
+            }
+            
+            info.ParameterType     = SQL_VARCHAR;
+            info.StrLen_or_Ind     = len;
+            info.ColumnSize        = ostr_len;
+            info.ParameterValuePtr = buf;
+            info.BufferLength      = ostr_len + 1;
+            info.allocated         = true;
+        }
     }
     else
     {
@@ -631,11 +651,13 @@ static bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
     // Populates `info`.
 
     // Hold a reference to param until info is freed, because info will often be holding data borrowed from param.
+    int ostr_len = 0;
     if (PyObject_TypeCheck(param, (PyTypeObject*)SQLParameter_type))
     {
         info.pParam = ((SQLParameter*)param)->value;
         Py_INCREF(info.pParam);
         info.InputOutputType = ((SQLParameter*)param)->type;
+        ostr_len = ((SQLParameter*)param)->ostr_len;
     }
     else
     {
@@ -651,7 +673,7 @@ static bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
         return GetNullBinaryInfo(cur, index, info);
 
     if (PyBytes_Check(info.pParam))
-        return GetBytesInfo(cur, index, info.pParam, info);
+        return GetBytesInfo(cur, index, info.pParam, info, ostr_len);
 
     if (PyBool_Check(info.pParam))
         return GetBooleanInfo(cur, index, info.pParam, info);
@@ -978,6 +1000,7 @@ static const char* SQLParameter_doc = "TODO";
 static PyMemberDef SQLParameter_members[] = {
     { "value", T_OBJECT_EX, offsetof(SQLParameter, value), 0, "parameter value" },
     { "type",  T_INT, offsetof(SQLParameter, type), 0, "parameter type" },
+    { "ostr_len", T_INT, offsetof(SQLParameter, ostr_len), 0, "parameter output string minimal length" },
     { NULL } /* Sentinel */
 };
 
@@ -1000,8 +1023,8 @@ static PyObject* SQLParameter_new(PyTypeObject* type, PyObject* args, PyObject* 
     {
         Py_INCREF(Py_None);
         self->value = Py_None;
-
         self->type = SQL_PARAM_TYPE_DEFAULT;
+        self->ostr_len = 2048 - 1;
     }
 
     return (PyObject*)self;
@@ -1012,10 +1035,10 @@ static int SQLParameter_init(SQLParameter* self, PyObject* args, PyObject* kwds)
     PyObject* value = NULL;
     PyObject* tmp;
 
-    static char* kwlist[] = { "value", "type", NULL };
+    static char* kwlist[] = { "value", "type", "ostr_len", NULL };
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|i", kwlist,
-                                     &value, &self->type))
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|ii", kwlist,
+                                     &value, &self->type, &self->ostr_len))
     {
         return -1;
     }
