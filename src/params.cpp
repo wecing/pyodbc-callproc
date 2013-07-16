@@ -222,6 +222,9 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
                 ostr_len = (int)len;
             }
             void *buf = (void *)malloc(ostr_len + 1);
+            if (buf == NULL) {
+                return false;
+            }
             if (info.InputOutputType == SQL_PARAM_INPUT_OUTPUT) {
                 memcpy(buf, PyBytes_AS_STRING(param), len + 1);
             } else {
@@ -294,6 +297,13 @@ static bool GetUnicodeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
     return true;
 }
 
+static PyObject* ToBooleanInfo(const ParamInfo* info)
+{
+    PyObject *o = info->Data.ch ? Py_True : Py_False;
+    Py_INCREF(o);
+    return o;
+}
+
 static bool GetBooleanInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
 {
     info.ValueType         = SQL_C_BIT;
@@ -301,6 +311,7 @@ static bool GetBooleanInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
     info.StrLen_or_Ind     = 1;
     info.Data.ch           = (unsigned char)(param == Py_True ? 1 : 0);
     info.ParameterValuePtr = &info.Data.ch;
+    info.fnToPyObject = ToBooleanInfo;
     return true;
 }
 
@@ -440,6 +451,11 @@ static bool GetLongInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInf
     return true;
 }
 
+static PyObject* ToFloatInfo(const ParamInfo* info)
+{
+    return PyFloat_FromDouble(info->Data.dbl);
+}
+
 static bool GetFloatInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
 {
     // TODO: Overflow?
@@ -451,6 +467,7 @@ static bool GetFloatInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     info.StrLen_or_Ind     = sizeof(info.Data.dbl);
     info.BufferLength      = sizeof(info.Data.dbl);
     info.ColumnSize = 15;
+    info.fnToPyObject = ToFloatInfo;
     return true;
 }
 
