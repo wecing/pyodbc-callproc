@@ -881,7 +881,7 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
         else
 #endif
         {
-            SQLWChar query(pCallStatement);
+            SQLWChar query(pCallStatement); // FIXME: pCallStatement is not a unicode object.
             if (!query)
                 return 0;
 

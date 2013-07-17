@@ -57,6 +57,6 @@ extern Py_ssize_t SQLWCHAR_SIZE;
 // Allocate a new Unicode object, initialized from the given SQLWCHAR string.
 PyObject* PyUnicode_FromSQLWCHAR(const SQLWCHAR* sz, Py_ssize_t cch);
 
-SQLWCHAR* SQLWCHAR_FromUnicode(const Py_UNICODE* pch, Py_ssize_t len);
+SQLWCHAR* SQLWCHAR_FromUnicode(const Py_UNICODE* pch, Py_ssize_t len, int buff_len = -1);
 
 #endif // _PYODBCSQLWCHAR_H
