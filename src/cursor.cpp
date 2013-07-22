@@ -810,10 +810,7 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
         return 0;
     }
 
-    // FIXME: dafuq?
-    // free_results(cursor, FREE_STATEMENT | KEEP_PREPARED);
-    SQLFreeStmt(cursor->hstmt, SQL_CLOSE);
-    SQLFreeStmt(cursor->hstmt, SQL_CLOSE); // FIXME: dafuq? why do I have to call it twice?
+    free_results(cursor, FREE_STATEMENT | KEEP_PREPARED);
 
     PyObject* pProcName = PyTuple_GET_ITEM(args, 0);
     if (!PyString_Check(pProcName) && !PyUnicode_Check(pProcName))

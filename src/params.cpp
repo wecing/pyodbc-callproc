@@ -252,59 +252,8 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     return true;
 }
 
-// SQL Server uses UCS-2 for nvarchar/ntext.
-//
-// this is copied and modified from PyUnicode_FromSQLWCHAR in sqlwchar.cpp
-static PyObject* PyUnicode_FromUCS2(const char* p, Py_ssize_t cch)
-{
-    // Create a Python Unicode object from a zero-terminated SQLWCHAR.
-    if (2 == Py_UNICODE_SIZE)
-    {
-        // The ODBC Unicode and Python Unicode types are the same size.  Cast the ODBC type to the Python type and use
-        // a fast function.
-        return PyUnicode_FromUnicode((const Py_UNICODE*)p, cch);
-    }
-    
-#ifdef HAVE_WCHAR_H
-    if (sizeof(wchar_t) == 2)
-    {
-        // The ODBC Unicode is the same as wchar_t.  Python provides a function for that.
-        return PyUnicode_FromWideChar((const wchar_t*)p, cch);
-    }
-#endif
-
-    // There is no conversion, so we will copy it ourselves with a simple cast.
-
-    // I don't believe in any case Py_UNICODE_SIZE could be smaller than 2.
-    // So I think just copy without checking would be fine.
-    
-    Object result(PyUnicode_FromUnicode(0, cch));
-    if (!result)
-        return 0;
-
-    Py_UNICODE* pch = PyUnicode_AS_UNICODE(result.Get());
-    for (Py_ssize_t i = 0; i < cch; i++)
-        pch[i] = (Py_UNICODE)p[i];
-    
-    return result.Detach();
-}
-
-
 static PyObject* ToUnicodeInfo(const ParamInfo* info) {
-    // // FIXME
-    printf("buff len: %ld\n", info->StrLen_or_Ind);
-    printf("sizeof(SQLWCHAR): %ld\n", sizeof(SQLWCHAR));
-    printf("sizeof(Py_UNICODE): %ld\n", sizeof(Py_UNICODE));
-    // for (int i = 0; i < info->StrLen_or_Ind / sizeof(SQLWCHAR); i++) {
-    //     printf("> (%lx)\n", (unsigned long)((SQLWCHAR*)(info->ParameterValuePtr))[i]);
-    // }
-    for (int i = 0; i < info->StrLen_or_Ind; i++) {
-        printf("> (%hx)\n", (unsigned short)((unsigned char*)(info->ParameterValuePtr))[i]);
-    }
-    // Py_INCREF(Py_None);
-    // return Py_None;
-    // return PyUnicode_FromSQLWCHAR((const SQLWCHAR*)info->ParameterValuePtr, info->StrLen_or_Ind / sizeof(SQLWCHAR));
-    return PyUnicode_FromUCS2((const char*)info->ParameterValuePtr, info->StrLen_or_Ind / 2);
+    return PyUnicode_FromSQLWCHAR((const SQLWCHAR*)info->ParameterValuePtr, info->StrLen_or_Ind / sizeof(SQLWCHAR));
 }
 
 static bool GetUnicodeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info, int ostr_len)
@@ -312,44 +261,11 @@ static bool GetUnicodeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
     Py_UNICODE* pch = PyUnicode_AsUnicode(param);
     Py_ssize_t  len = PyUnicode_GET_SIZE(param);
 
-    printf("GetUnicodeInfo.len: %d\n", (int)len); // FIXME
-
-    { // FIXME
-        printf("input PyUnicode:\n");
-        for (int i = 0; i < len*sizeof(Py_UNICODE); i++) {
-            printf("> (%hx)\n", (unsigned short)((unsigned char *)pch)[i]);
-        }
-        printf("=====\n");
-    }
-
     info.ValueType  = SQL_C_WCHAR;
     info.ColumnSize = (SQLUINTEGER)max(len, 1);
 
     if (len <= cur->cnxn->wvarchar_maxlength)
     {
-        // if (SQLWCHAR_SIZE == Py_UNICODE_SIZE)
-        // {
-        //     info.ParameterValuePtr = pch;
-        // }
-        // else
-        // {
-        //     // SQLWCHAR and Py_UNICODE are not the same size, so we need to allocate and copy a buffer.
-        //     if (len > 0)
-        //     {
-        //         info.ParameterValuePtr = SQLWCHAR_FromUnicode(pch, len);
-        //         if (info.ParameterValuePtr == 0)
-        //             return false;
-        //         info.allocated = true;
-        //     }
-        //     else
-        //     {
-        //         info.ParameterValuePtr = pch;
-        //     }
-        // }
-
-        // info.ParameterType = SQL_WVARCHAR;
-        // info.StrLen_or_Ind = (SQLINTEGER)(len * sizeof(SQLWCHAR));
-
         if (info.InputOutputType == SQL_PARAM_INPUT) {
             info.ParameterType = SQL_WVARCHAR;
             info.StrLen_or_Ind = (SQLINTEGER)(len * sizeof(SQLWCHAR));
@@ -359,24 +275,7 @@ static bool GetUnicodeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
             } else {
                 info.ParameterValuePtr = SQLWCHAR_FromUnicode(pch, len);
                 info.allocated = true;
-                { // FIXME
-                    // FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
-                    for (int i = 0; i < 8; i++) {
-                        memcpy((char*)info.ParameterValuePtr + i*2, (char*)info.ParameterValuePtr + i*4, 2);
-                    }
-                    memset((char*)info.ParameterValuePtr + 8*2, 0, 2);
-                    // FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
-
-                    printf("converted input SQLWCHAR sequence:\n");
-                    for (int i = 0; i < len*sizeof(SQLWCHAR); i++) {
-                        printf("> (%hx)\n", (unsigned short)((unsigned char*)(info.ParameterValuePtr))[i]);
-                    }
-                    printf("=====\n");
-                }
             }
-
-            printf("SQLBindParameter:\n");
-            printf("    ColumnSize=%d\n    BufferLength=%d\n    *StrLen_or_IndPtr=%d\n", info.ColumnSize, info.BufferLength, info.StrLen_or_Ind);
         } else {
             if (ostr_len < len) {
                 ostr_len = (int)len;
@@ -388,13 +287,6 @@ static bool GetUnicodeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
             info.BufferLength  = (SQLINTEGER)((ostr_len + 1) * sizeof(SQLWCHAR));
             info.allocated = true;
             info.fnToPyObject = ToUnicodeInfo;
-            { // FIXME
-                printf("converted SQLWCHAR sequence:\n");
-                for (int i = 0; i < len; i++) {
-                    printf("> (%lx)\n", (unsigned long)((SQLWCHAR*)(info.ParameterValuePtr))[i]);
-                }
-                printf("=====\n");
-            }
         }
     }
     else
