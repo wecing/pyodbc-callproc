@@ -193,14 +193,6 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     Py_ssize_t len = PyBytes_GET_SIZE(param);
 
 #if PY_MAJOR_VERSION >= 3
-
-    // oh yeah.
-    #if _MSC_VER
-        #pragma message("Warning: pyodbc-callproc doesn't support python3 yet")
-    #else
-        #warning pyodbc-callproc doesn't support python3 yet
-    #endif
-
     info.ValueType = SQL_C_BINARY;
     info.ColumnSize = (SQLUINTEGER)max(len, 1);
 
@@ -670,20 +662,40 @@ static bool GetBufferInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamI
 }
 #endif
 
-// FIXME: implement ToByteArrayInfo!
 #if PY_VERSION_HEX >= 0x02060000
-static bool GetByteArrayInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
+static PyObject* ToByteArrayInfo(const ParamInfo* info) {
+    return PyByteArray_FromStringAndSize((const char*)info->ParameterValuePtr, info->StrLen_or_Ind);
+}
+
+static bool GetByteArrayInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info, int obuf_len)
 {
     info.ValueType = SQL_C_BINARY;
 
     Py_ssize_t cb = PyByteArray_Size(param);
     if (cb <= cur->cnxn->binary_maxlength)
     {
-        info.ParameterType     = SQL_VARBINARY;
-        info.ParameterValuePtr = (SQLPOINTER)PyByteArray_AsString(param);
-        info.BufferLength      = cb;
-        info.ColumnSize        = (SQLUINTEGER)max(cb, 1);
-        info.StrLen_or_Ind     = cb;
+        info.ParameterType = SQL_VARBINARY;
+        info.ColumnSize = (SQLUINTEGER)max(cb, 1);
+        info.StrLen_or_Ind = cb;
+        if (info.InputOutputType == SQL_PARAM_INPUT) {
+            info.BufferLength = cb;
+            info.ParameterValuePtr = PyByteArray_AS_STRING(param);
+        } else {
+            if (obuf_len < cb) {
+                obuf_len = (int)cb;
+            }
+            void* buf = malloc(obuf_len);
+            if (buf == NULL) {
+                return false;
+            }
+            if (info.InputOutputType == SQL_PARAM_INPUT_OUTPUT) {
+                memcpy(buf, PyByteArray_AS_STRING(param), cb);
+            }
+            info.ColumnSize        = obuf_len;
+            info.ParameterValuePtr = buf;
+            info.BufferLength      = obuf_len;
+            info.allocated = true;
+        }
     }
     else
     {
@@ -693,6 +705,8 @@ static bool GetByteArrayInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
         info.BufferLength      = sizeof(PyObject*); // How big is ParameterValuePtr; ODBC copies it and gives it back in SQLParamData
         info.StrLen_or_Ind     = cur->cnxn->need_long_data_len ? SQL_LEN_DATA_AT_EXEC((SQLLEN)cb) : SQL_DATA_AT_EXEC;
     }
+    
+    info.fnToPyObject = ToByteArrayInfo;
     return true;
 }
 #endif
@@ -754,7 +768,7 @@ static bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
 
 #if PY_VERSION_HEX >= 0x02060000
     if (PyByteArray_Check(info.pParam))
-        return GetByteArrayInfo(cur, index, info.pParam, info);
+        return GetByteArrayInfo(cur, index, info.pParam, info, ostr_len);
 #endif
 
 #if PY_MAJOR_VERSION < 3
