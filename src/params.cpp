@@ -174,10 +174,18 @@ static bool GetNullBinaryInfo(Cursor* cur, Py_ssize_t index, ParamInfo& info)
 
 static PyObject* ToBytesInfo(const ParamInfo* info)
 {
-    return PyString_FromString((const char *)info->ParameterValuePtr);
+#if PY_MAJOR_VERSION >= 3
+    if (info->StrLen_or_Ind <= 0) {
+        return PyBytes_FromString((const char*)info->ParameterValuePtr);
+    }
+    return PyBytes_FromStringAndSize((const char*)info->ParameterValuePtr, info->StrLen_or_Ind);
+#else
+    return PyString_FromString((const char*)info->ParameterValuePtr);
+#endif
 }
 
-
+// FIXME: python3 bytes object ONLY corresponds to varbinary in SQL; you cannot use it on varchar/text.
+//        so detect what the procedure parameter's type is, maybe? or add an new API interface for specifying that?
 static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info, int ostr_len)
 {
     // In Python 2, a bytes object (ANSI string) is passed as varchar.  In Python 3, it is passed as binary.
@@ -186,56 +194,78 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
 
 #if PY_MAJOR_VERSION >= 3
 
-// oh yeah.
-#error "pyodbc-callproc doesn't support python3 yet"
+    // oh yeah.
+    #if _MSC_VER
+        #pragma message("Warning: pyodbc-callproc doesn't support python3 yet")
+    #else
+        #warning pyodbc-callproc doesn't support python3 yet
+    #endif
 
     info.ValueType = SQL_C_BINARY;
     info.ColumnSize = (SQLUINTEGER)max(len, 1);
 
-    // FIXME: py3 mode
+    // FIXME: share code between py3 and py2
+    // FIXME: I think bytearray doesn't need the extra space for NUL...
     if (len <= cur->cnxn->binary_maxlength)
     {
         info.ParameterType     = SQL_VARBINARY;
         info.StrLen_or_Ind     = len;
+        if (info.InputOutputType == SQL_PARAM_INPUT) {
+            info.BufferLength = len + 1;
+            info.ParameterValuePtr = PyBytes_AS_STRING(param);
+        } else {
+            if (ostr_len < len) {
+                ostr_len = (int)len;
+            }
+            void* buf = malloc(ostr_len + 1);
+            if (buf == NULL) {
+                return false;
+            }
+            if (info.InputOutputType == SQL_PARAM_INPUT_OUTPUT) {
+                memcpy(buf, PyBytes_AS_STRING(param), len+1);
+            } else {
+                ((char*)buf)[0] = '\0';
+            }
+            info.ColumnSize        = ostr_len;
+            info.ParameterValuePtr = buf;
+            info.BufferLength      = ostr_len+1;
+            info.allocated         = true;
+        }
     }
-    else
+    else // FIXME: improve this for OUTPUT and INPUT_OUTPUT!
     {
         // Too long to pass all at once, so we'll provide the data at execute.
         info.ParameterType     = SQL_LONGVARBINARY;
         info.StrLen_or_Ind     = cur->cnxn->need_long_data_len ? SQL_LEN_DATA_AT_EXEC((SQLLEN)len) : SQL_DATA_AT_EXEC;
     }
-
 #else
     info.ValueType = SQL_C_CHAR;
     info.ColumnSize = (SQLUINTEGER)max(len, 1);
 
     if (len <= cur->cnxn->varchar_maxlength)
     {
+        info.ParameterType = SQL_VARCHAR;
+        info.StrLen_or_Ind = len;
         // FIXME: INPUT_STREAM & INPUT_OUTPUT_STREAM are not supported in unixODBC for now.
         if (info.InputOutputType == SQL_PARAM_INPUT) {
-            info.ParameterType = SQL_VARCHAR;
-            info.StrLen_or_Ind = len;
             info.BufferLength = len + 1; // should not be used?
             info.ParameterValuePtr = PyBytes_AS_STRING(param);
         } else {
             if (ostr_len < len) {
                 ostr_len = (int)len;
             }
-            void *buf = malloc(ostr_len + 1);
+            void* buf = malloc(ostr_len + 1);
             if (buf == NULL) {
                 return false;
             }
             if (info.InputOutputType == SQL_PARAM_INPUT_OUTPUT) {
-                memcpy(buf, PyBytes_AS_STRING(param), len + 1);
+                memcpy(buf, PyBytes_AS_STRING(param), len+1);
             } else {
                 ((char*)buf)[0] = '\0';
             }
-            
-            info.ParameterType     = SQL_VARCHAR;
-            info.StrLen_or_Ind     = len;
             info.ColumnSize        = ostr_len;
             info.ParameterValuePtr = buf;
-            info.BufferLength      = ostr_len + 1;
+            info.BufferLength      = ostr_len+1;
             info.allocated         = true;
         }
     }
@@ -406,12 +436,12 @@ static bool GetTimeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInf
     return true;
 }
 
+#if PY_MAJOR_VERSION < 3
 static PyObject* ToIntInfo(const ParamInfo* info)
 {
     return PyInt_FromLong(info->Data.l);
 }
 
-#if PY_MAJOR_VERSION < 3
 static bool GetIntInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
 {
     info.Data.l = PyInt_AsLong(param);
@@ -640,6 +670,7 @@ static bool GetBufferInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamI
 }
 #endif
 
+// FIXME: implement ToByteArrayInfo!
 #if PY_VERSION_HEX >= 0x02060000
 static bool GetByteArrayInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
 {
@@ -1035,7 +1066,11 @@ static int SQLParameter_clear(SQLParameter* self)
 static void SQLParameter_dealloc(SQLParameter* self)
 {
     SQLParameter_clear(self);
+#ifndef Py_TYPE
     self->ob_type->tp_free((PyObject*)self);
+#else
+    Py_TYPE(self)->tp_free(self);
+#endif
 }
 
 static PyObject* SQLParameter_new(PyTypeObject* type, PyObject* args, PyObject* kwds)
@@ -1078,8 +1113,12 @@ static int SQLParameter_init(SQLParameter* self, PyObject* args, PyObject* kwds)
 
 static PyTypeObject SQLParameterType =
 {
+#ifndef PyVarObject_HEAD_INIT
     PyObject_HEAD_INIT(NULL)
     0,                       /* ob_size */
+#else
+    PyVarObject_HEAD_INIT(NULL, 0)
+#endif
     "pyodbc.SQLParameter",   /* tp_name */
     sizeof(SQLParameter),    /* tp_basicsize */
     0,                       /* tp_itemsize */

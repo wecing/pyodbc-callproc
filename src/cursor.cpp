@@ -855,10 +855,28 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
 
     PyObject* pReturn = 0;
 
+    // FIXME: assuming the method name does not contain characters beyond (extended?) ascii.
+    //
+    // Under Python 3, PyString_AsString is a macro provided by pyodbc which expands to PyUnicode_AsString,
+    // which is obsolete from Py 3.3(?). So maybe we should remove the macro def in pyodbccompat.h.
+#if PY_VERSION_HEX >= 0x03000000
+    PyObject* pCallprocName = PyUnicode_AsASCIIString(pProcName);
+    PyObject* pCallStatement = PyString_FromFormat("{ CALL %s(%s) }", PyBytes_AsString(pCallprocName), pszParameterList);
+    Py_DECREF(pCallprocName);
+#else
     PyObject* pCallStatement = PyString_FromFormat("{ CALL %s(%s) }", PyString_AsString(pProcName), pszParameterList);
+#endif
     if (pCallStatement)
     {
-        TRACE("cursor.callproc: %s\n", PyString_AS_STRING(pCallStatement));
+        {
+#if PY_VERSION_HEX >= 0x03000000
+            PyObject* asciiObj = PyUnicode_AsASCIIString(pProcName);
+            TRACE("cursor.callproc: %s\n", PyBytes_AsString(asciiObj));
+            Py_DECREF(asciiObj);
+#else
+            TRACE("cursor.callproc: %s\n", PyString_AS_STRING(pCallStatement));
+#endif
+        }
 
         if (!BindParams(cursor, args, !paramsInTuple /* skip_first */))
             return 0;
