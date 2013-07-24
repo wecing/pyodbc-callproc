@@ -628,7 +628,11 @@ static bool GetDecimalInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
 }
 
 #if PY_MAJOR_VERSION < 3
-static bool GetBufferInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
+static PyObject* ToBufferInfo(const ParamInfo* info) {
+    return PyBuffer_FromMemory((void*)info->ParameterValuePtr, info->StrLen_or_Ind);
+}
+
+static bool GetBufferInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info, int obuf_len)
 {
     info.ValueType = SQL_C_BINARY;
 
@@ -640,10 +644,28 @@ static bool GetBufferInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamI
         // There is one segment, so we can bind directly into the buffer object.
 
         info.ParameterType     = SQL_VARBINARY;
-        info.ParameterValuePtr = (SQLPOINTER)pb;
-        info.BufferLength      = cb;
         info.ColumnSize        = (SQLUINTEGER)max(cb, 1);
         info.StrLen_or_Ind     = cb;
+
+        if (info.InputOutputType == SQL_PARAM_INPUT) {
+            info.ParameterValuePtr = (SQLPOINTER)pb;
+            info.BufferLength      = cb;
+        } else {
+            if (obuf_len < cb) {
+                obuf_len = (int)cb;
+            }
+            void* buf = malloc(obuf_len);
+            if (buf == NULL) {
+                return false;
+            }
+            if (info.InputOutputType == SQL_PARAM_INPUT_OUTPUT) {
+                memcpy(buf, pb, cb);
+            }
+            info.ColumnSize = obuf_len;
+            info.ParameterValuePtr = buf;
+            info.BufferLength = obuf_len;
+            info.allocated = true;
+        }
     }
     else
     {
@@ -658,6 +680,7 @@ static bool GetBufferInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamI
         info.StrLen_or_Ind     = cur->cnxn->need_long_data_len ? SQL_LEN_DATA_AT_EXEC((SQLLEN)PyBuffer_Size(param)) : SQL_DATA_AT_EXEC;
     }
 
+    info.fnToPyObject = ToBufferInfo;
     return true;
 }
 #endif
@@ -776,7 +799,7 @@ static bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
         return GetIntInfo(cur, index, info.pParam, info);
 
     if (PyBuffer_Check(info.pParam))
-        return GetBufferInfo(cur, index, info.pParam, info);
+        return GetBufferInfo(cur, index, info.pParam, info, ostr_len);
 #endif
 
     RaiseErrorV("HY105", ProgrammingError, "Invalid parameter type.  param-index=%zd param-type=%s", index, Py_TYPE(info.pParam)->tp_name);
