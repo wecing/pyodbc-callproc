@@ -1229,6 +1229,10 @@ class FreeTDSTestCase(unittest.TestCase):
         self.cursor.execute('select 1')
         self.cursor.execute('select 1')
 
+    #
+    # callproc
+    #
+
     def test_callproc_output_varchar_int(self):
         self.cursor.execute('''
                             create procedure proc1
@@ -1361,11 +1365,6 @@ class FreeTDSTestCase(unittest.TestCase):
         v = pyodbc.SQLParameter(Decimal(), pyodbc.SQL_PARAM_OUTPUT)
         r = self.cursor.callproc('proc1', v)[0]
         self.assertEquals(r, Decimal('29.48'))
-
-        
-    # self.cursor.execute('''
-    #                     ''')
-    # self.cnxn.commit()
 
     def test_callproc_get_unicode(self):
         self.cursor.execute(u'''

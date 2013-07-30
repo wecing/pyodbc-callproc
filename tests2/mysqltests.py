@@ -646,6 +646,155 @@ class MySqlTestCase(unittest.TestCase):
         othercnxn.autocommit = False
         self.assertEqual(othercnxn.autocommit, False)
 
+    #
+    # callproc
+    #
+
+    def test_callproc_output_varchar_int(self):
+        self.cursor.execute('''
+                            create procedure proc1(out a varchar(30), inout b integer)
+                            begin
+                                select version() into a;
+                                select (b+1) into b;
+                            end
+                            ''')
+        self.cnxn.commit()
+        ver_p = pyodbc.SQLParameter('', pyodbc.SQL_PARAM_OUTPUT)
+        v_p = pyodbc.SQLParameter(41, pyodbc.SQL_PARAM_INPUT_OUTPUT)
+        r = self.cursor.callproc('proc1', ver_p, v_p)
+        self.assertTrue(re.match(r'[0-9]+\.[0-9]+\.[0-9]+', r[0]))
+        self.assertEquals(r[1], 42)
+
+    def test_callproc_output_truncate_str(self):
+        self.cursor.execute('''
+                            create procedure proc1(out a varchar(30), inout b integer)
+                            begin
+                                select version() into a;
+                                select (b+1) into b;
+                            end
+                            ''')
+        self.cnxn.commit()
+        ver_p = pyodbc.SQLParameter('', pyodbc.SQL_PARAM_OUTPUT, 5)
+        v_p = pyodbc.SQLParameter(41, pyodbc.SQL_PARAM_INPUT_OUTPUT)
+        r = self.cursor.callproc('proc1', ver_p, v_p)
+        self.assertEquals(len(r[0]), 5)
+        
+    def test_callproc_append_str(self):
+        self.cursor.execute('''
+                            create procedure proc1(inout a varchar(30))
+                            begin
+                                select concat(a, ', hi!') into a;
+                            end
+                            ''')
+        self.cnxn.commit()
+        s = pyodbc.SQLParameter('bessie', pyodbc.SQL_PARAM_INPUT_OUTPUT)
+        r = self.cursor.callproc('proc1', s)
+        self.assertEquals(r[0], 'bessie, hi!')
+        
+    def test_callproc_copy_str(self):
+        self.cursor.execute('''
+                            create procedure proc1(in a nvarchar(30), out b nvarchar(30))
+                            begin
+                                select a into b;
+                            end
+                            ''')
+        self.cnxn.commit()
+        v_p = pyodbc.SQLParameter('', pyodbc.SQL_PARAM_OUTPUT)
+        r = self.cursor.callproc('proc1', 'nice', v_p)
+        self.assertEquals(r[1], 'nice')
+        
+    def test_callproc_copy_bytearray(self):
+        self.cursor.execute('''
+                            create procedure proc1(in a varbinary(50), out b varbinary(50))
+                            begin
+                                select a into b;
+                            end
+                            ''')
+        self.cnxn.commit()
+        v = pyodbc.SQLParameter(bytearray(), pyodbc.SQL_PARAM_OUTPUT)
+        r = self.cursor.callproc('proc1', bytearray(b'hello, world'), v)
+        self.assertEquals(r[1], bytearray(b'hello, world'))
+        
+    def test_callproc_copy_binary(self):
+        self.cursor.execute('''
+                            create procedure proc1(in a varbinary(50), out b varbinary(50))
+                            begin
+                                select a into b;
+                            end
+                            ''')
+        self.cnxn.commit()
+        v = pyodbc.SQLParameter(buffer(b''), pyodbc.SQL_PARAM_OUTPUT)
+        r = self.cursor.callproc('proc1', buffer(b'hello, world'), v)
+        self.assertEquals(r[1], buffer(b'hello, world'))
+        
+    def test_callproc_date(self):
+        self.cursor.execute('''
+                            create procedure proc1(out v date)
+                            begin
+                                select curdate() into v;
+                            end
+                            ''')
+        self.cnxn.commit()
+        v = pyodbc.SQLParameter(date(1993,1,17), pyodbc.SQL_PARAM_INPUT_OUTPUT)
+        r = self.cursor.callproc('proc1', v)
+        self.assertEquals(r[0], datetime.date(datetime.now()))
+        
+    def test_callproc_time(self):
+        self.cursor.execute('''
+                            create procedure proc1(out t time)
+                            begin
+                                select curtime() into t;
+                            end
+                            ''')
+        self.cnxn.commit()
+        v = pyodbc.SQLParameter(time(1,22,33), pyodbc.SQL_PARAM_INPUT_OUTPUT)
+        r = self.cursor.callproc('proc1', v)
+        t = datetime.time(datetime.now())
+        s1 = r[0].hour * 3600 + r[0].minute * 60 + r[0].second
+        s2 = t.hour * 3600 + t.minute * 60 + t.second
+        self.assertTrue(-30 <= s2 - s1 <= 30)
+        
+
+    def test_callproc_datetime(self):
+        self.cursor.execute('''
+                            create procedure proc1(out t datetime)
+                            begin
+                                select current_timestamp() into t;
+                            end
+                            ''')
+        self.cnxn.commit()
+        v = pyodbc.SQLParameter(datetime(1993,1,17,1,22,33,0), pyodbc.SQL_PARAM_INPUT_OUTPUT)
+        r = self.cursor.callproc('proc1', v)
+        now = datetime.now()
+        d = now - r[0]
+        if (d.days == -1):
+            d = r[0] - now
+        self.assertTrue(d.days == 0 and d.seconds < 30)
+        
+    def test_callproc_get_decimal(self):
+        self.cursor.execute('''
+                            create procedure proc1(out v decimal(6, 4))
+                            begin
+                                select 29.48 into v;
+                            end
+                            ''')
+        self.cnxn.commit()
+        v = pyodbc.SQLParameter(Decimal(), pyodbc.SQL_PARAM_OUTPUT)
+        r = self.cursor.callproc('proc1', v)[0]
+        self.assertEquals(r, Decimal('29.48'))
+
+    def test_callproc_get_unicode(self):
+        self.cursor.execute(u'''
+                            create procedure proc1(out s nvarchar(30))
+                            begin
+                                select N'\u4f60\u662f\u75af\u513f\u6211\u662f\u50bb' into s;
+                            end
+                            ''')
+        self.cnxn.commit()
+        s = pyodbc.SQLParameter(u'', pyodbc.SQL_PARAM_OUTPUT)
+        r = self.cursor.callproc('proc1', s)
+        self.assertEquals(r[0], u'\u4f60\u662f\u75af\u513f\u6211\u662f\u50bb')
+
 
 def main():
     from optparse import OptionParser
