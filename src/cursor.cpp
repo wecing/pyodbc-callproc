@@ -811,7 +811,7 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
     }
 
     free_results(cursor, FREE_STATEMENT | KEEP_PREPARED);
-    free_results(cursor, FREE_STATEMENT | KEEP_PREPARED); // FIXME
+    free_results(cursor, FREE_STATEMENT | KEEP_PREPARED); // FIXME: why?
 
     PyObject* pProcName = PyTuple_GET_ITEM(args, 0);
     if (!PyString_Check(pProcName) && !PyUnicode_Check(pProcName))
@@ -897,7 +897,7 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
         else
 #endif
         {
-            SQLWChar query(pCallStatement); // FIXME: pCallStatement is not a unicode object.
+            SQLWChar query(pCallStatement);
             if (!query)
                 return 0;
 

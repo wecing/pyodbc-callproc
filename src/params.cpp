@@ -197,7 +197,6 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     info.ColumnSize = (SQLUINTEGER)max(len, 1);
 
     // FIXME: share code between py3 and py2
-    // FIXME: I think bytearray doesn't need the extra space for NUL...
     if (len <= cur->cnxn->binary_maxlength)
     {
         info.ParameterType     = SQL_VARBINARY;
@@ -224,7 +223,7 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
             info.allocated         = true;
         }
     }
-    else // FIXME: improve this for OUTPUT and INPUT_OUTPUT!
+    else
     {
         // Too long to pass all at once, so we'll provide the data at execute.
         info.ParameterType     = SQL_LONGVARBINARY;
@@ -304,7 +303,11 @@ static bool GetUnicodeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
             }
             info.ParameterType = SQL_WVARCHAR;
             info.ColumnSize    = ostr_len;
-            info.ParameterValuePtr = SQLWCHAR_FromUnicode(pch, len, ostr_len); // FIXME: copying not required for OUTPUT
+            if (info.InputOutputType == SQL_PARAM_INPUT_OUTPUT) {
+                info.ParameterValuePtr = SQLWCHAR_FromUnicode(pch, len, ostr_len);
+            } else {
+                info.ParameterValuePtr = malloc(sizeof(SQLWCHAR) * ostr_len);
+            }
             info.StrLen_or_Ind = (SQLINTEGER)(len * sizeof(SQLWCHAR));
             info.BufferLength  = (SQLINTEGER)((ostr_len + 1) * sizeof(SQLWCHAR));
             info.allocated = true;
