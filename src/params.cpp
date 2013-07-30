@@ -498,7 +498,7 @@ static bool GetFloatInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     return true;
 }
 
-static char* CreateDecimalString(long sign, PyObject* digits, long exp)
+static char* CreateDecimalString(long sign, PyObject* digits, long exp, int ostr_len=0)
 {
     long count = (long)PyTuple_GET_SIZE(digits);
 
@@ -510,7 +510,8 @@ static char* CreateDecimalString(long sign, PyObject* digits, long exp)
         // (1 2 3) exp = 2 --> '12300'
 
         len = sign + count + exp + 1; // 1: NULL
-        pch = (char*)pyodbc_malloc((size_t)len);
+        ostr_len = max((int)len, ostr_len);
+        pch = (char*)pyodbc_malloc((size_t)ostr_len);
         if (pch)
         {
             char* p = pch;
@@ -528,7 +529,8 @@ static char* CreateDecimalString(long sign, PyObject* digits, long exp)
         // (1 2 3) exp = -2 --> 1.23 : prec = 3, scale = 2
 
         len = sign + count + 2; // 2: decimal + NULL
-        pch = (char*)pyodbc_malloc((size_t)len);
+        ostr_len = max((int)len, ostr_len);
+        pch = (char*)pyodbc_malloc((size_t)ostr_len);
         if (pch)
         {
             char* p = pch;
@@ -549,7 +551,8 @@ static char* CreateDecimalString(long sign, PyObject* digits, long exp)
 
         len = sign + -exp + 3; // 3: leading zero + decimal + NULL
 
-        pch = (char*)pyodbc_malloc((size_t)len);
+        ostr_len = max((int)len, ostr_len);
+        pch = (char*)pyodbc_malloc((size_t)ostr_len);
         if (pch)
         {
             char* p = pch;
@@ -572,7 +575,19 @@ static char* CreateDecimalString(long sign, PyObject* digits, long exp)
     return pch;
 }
 
-static bool GetDecimalInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info)
+static PyObject* _decimal_new = NULL;
+
+static PyObject* ToDecimalInfo(const ParamInfo* info)
+{
+#if PY_MAJOR_VERSION >= 3
+    PyObject* s = PyUnicode_FromString((const char*)info->ParameterValuePtr);
+#else
+    PyObject* s = PyString_FromString((const char*)info->ParameterValuePtr);
+#endif
+    return PyObject_CallObject(_decimal_new, PyTuple_Pack(1, s));
+}
+
+static bool GetDecimalInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info, int ostr_len)
 {
     // The NUMERIC structure never works right with SQL Server and probably a lot of other drivers.  We'll bind as a
     // string.  Unfortunately, the Decimal class doesn't seem to have a way to force it to return a string without
@@ -589,7 +604,7 @@ static bool GetDecimalInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
     Py_ssize_t count = PyTuple_GET_SIZE(digits);
 
     info.ValueType     = SQL_C_CHAR;
-    info.ParameterType = SQL_NUMERIC;
+    info.ParameterType = SQL_VARCHAR; // FIXME: just for now; won't work under SQL Server
 
     if (exp >= 0)
     {
@@ -614,7 +629,7 @@ static bool GetDecimalInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
 
     I(info.ColumnSize >= (SQLULEN)info.DecimalDigits);
 
-    info.ParameterValuePtr = CreateDecimalString(sign, digits, exp);
+    info.ParameterValuePtr = CreateDecimalString(sign, digits, exp, ostr_len);
     if (!info.ParameterValuePtr)
     {
         PyErr_NoMemory();
@@ -622,7 +637,9 @@ static bool GetDecimalInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
     }
     info.allocated = true;
 
+    info.BufferLength = ostr_len;
     info.StrLen_or_Ind = (SQLINTEGER)strlen((char*)info.ParameterValuePtr);
+    info.fnToPyObject = ToDecimalInfo;
 
     return true;
 }
@@ -787,7 +804,7 @@ static bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
         return GetFloatInfo(cur, index, info.pParam, info);
 
     if (PyDecimal_Check(info.pParam))
-        return GetDecimalInfo(cur, index, info.pParam, info);
+        return GetDecimalInfo(cur, index, info.pParam, info, ostr_len);
 
 #if PY_VERSION_HEX >= 0x02060000
     if (PyByteArray_Check(info.pParam))
@@ -1117,8 +1134,8 @@ static PyObject* SQLParameter_new(PyTypeObject* type, PyObject* args, PyObject* 
     {
         Py_INCREF(Py_None);
         self->value = Py_None;
-        self->type = SQL_PARAM_TYPE_DEFAULT;
-        self->ostr_len = 2048 - 1;
+        self->type = SQL_PARAM_INPUT; // iODBC's default is INPUT_OUTPUT.
+        self->ostr_len = 2048;
     }
 
     return (PyObject*)self;
@@ -1213,6 +1230,10 @@ bool Params_init()
     SQLParameter_type = (PyObject*)&SQLParameterType;
 
     PyDateTime_IMPORT;
+
+    PyObject* decimal_mod = PyImport_ImportModule("decimal");
+    PyObject* decimal_mod_dict = PyModule_GetDict(decimal_mod);
+    _decimal_new = PyDict_GetItemString(decimal_mod_dict, "Decimal");
 
     return true;
 }

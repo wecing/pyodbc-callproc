@@ -811,7 +811,7 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
     }
 
     free_results(cursor, FREE_STATEMENT | KEEP_PREPARED);
-    free_results(cursor, FREE_STATEMENT | KEEP_PREPARED);
+    free_results(cursor, FREE_STATEMENT | KEEP_PREPARED); // FIXME
 
     PyObject* pProcName = PyTuple_GET_ITEM(args, 0);
     if (!PyString_Check(pProcName) && !PyUnicode_Check(pProcName))
