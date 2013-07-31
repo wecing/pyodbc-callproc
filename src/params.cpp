@@ -194,13 +194,18 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
 
 #if PY_MAJOR_VERSION >= 3
     info.ValueType = SQL_C_BINARY;
-    info.ColumnSize = (SQLUINTEGER)max(len, 1);
+    info.ParameterType = SQL_VARBINARY;
+#else
+    info.ValueType = SQL_C_CHAR;
+    info.ParameterType = SQL_VARCHAR;
+#endif
 
-    // FIXME: share code between py3 and py2
+    info.ColumnSize = (SQLUINTEGER)max(len, 1);
     if (len <= cur->cnxn->binary_maxlength)
     {
-        info.ParameterType     = SQL_VARBINARY;
-        info.StrLen_or_Ind     = len;
+        info.StrLen_or_Ind = len;
+        // FIXME: unixODBC does not support INPUT_STREAM & INPUT_OUTPUT_STREAM.
+        //        so here I'm just assuming the user would never use them.
         if (info.InputOutputType == SQL_PARAM_INPUT) {
             info.BufferLength = len + 1;
             info.ParameterValuePtr = PyBytes_AS_STRING(param);
@@ -208,7 +213,7 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
             if (ostr_len < len) {
                 ostr_len = (int)len;
             }
-            void* buf = malloc(ostr_len + 1);
+            void* buf = pyodbc_malloc(ostr_len + 1);
             if (buf == NULL) {
                 return false;
             }
@@ -226,49 +231,14 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
     else
     {
         // Too long to pass all at once, so we'll provide the data at execute.
+#if PY_MAJOR_VERSION >= 3
         info.ParameterType     = SQL_LONGVARBINARY;
-        info.StrLen_or_Ind     = cur->cnxn->need_long_data_len ? SQL_LEN_DATA_AT_EXEC((SQLLEN)len) : SQL_DATA_AT_EXEC;
-    }
 #else
-    info.ValueType = SQL_C_CHAR;
-    info.ColumnSize = (SQLUINTEGER)max(len, 1);
-
-    if (len <= cur->cnxn->varchar_maxlength)
-    {
-        info.ParameterType = SQL_VARCHAR;
-        info.StrLen_or_Ind = len;
-        // FIXME: INPUT_STREAM & INPUT_OUTPUT_STREAM are not supported in unixODBC for now.
-        if (info.InputOutputType == SQL_PARAM_INPUT) {
-            info.BufferLength = len + 1; // should not be used?
-            info.ParameterValuePtr = PyBytes_AS_STRING(param);
-        } else {
-            if (ostr_len < len) {
-                ostr_len = (int)len;
-            }
-            void* buf = malloc(ostr_len + 1);
-            if (buf == NULL) {
-                return false;
-            }
-            if (info.InputOutputType == SQL_PARAM_INPUT_OUTPUT) {
-                memcpy(buf, PyBytes_AS_STRING(param), len+1);
-            } else {
-                ((char*)buf)[0] = '\0';
-            }
-            info.ColumnSize        = ostr_len;
-            info.ParameterValuePtr = buf;
-            info.BufferLength      = ostr_len+1;
-            info.allocated         = true;
-        }
-    }
-    else
-    {
-        // Too long to pass all at once, so we'll provide the data at execute.
         info.ParameterType     = SQL_LONGVARCHAR;
+#endif
         info.StrLen_or_Ind     = cur->cnxn->need_long_data_len ? SQL_LEN_DATA_AT_EXEC((SQLLEN)len) : SQL_DATA_AT_EXEC;
         info.ParameterValuePtr = param;
     }
-#endif
-
     info.fnToPyObject = ToBytesInfo;
     return true;
 }
@@ -306,7 +276,7 @@ static bool GetUnicodeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
             if (info.InputOutputType == SQL_PARAM_INPUT_OUTPUT) {
                 info.ParameterValuePtr = SQLWCHAR_FromUnicode(pch, len, ostr_len);
             } else {
-                info.ParameterValuePtr = malloc(sizeof(SQLWCHAR) * ostr_len);
+                info.ParameterValuePtr = pyodbc_malloc(sizeof(SQLWCHAR) * ostr_len);
             }
             info.StrLen_or_Ind = (SQLINTEGER)(len * sizeof(SQLWCHAR));
             info.BufferLength  = (SQLINTEGER)((ostr_len + 1) * sizeof(SQLWCHAR));
@@ -322,7 +292,6 @@ static bool GetUnicodeInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Param
         info.ParameterValuePtr = param;
         // FIXME: fnToPyObject?
     }
-
 
     return true;
 }
@@ -674,7 +643,7 @@ static bool GetBufferInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamI
             if (obuf_len < cb) {
                 obuf_len = (int)cb;
             }
-            void* buf = malloc(obuf_len);
+            void* buf = pyodbc_malloc(obuf_len);
             if (buf == NULL) {
                 return false;
             }
@@ -727,7 +696,7 @@ static bool GetByteArrayInfo(Cursor* cur, Py_ssize_t index, PyObject* param, Par
             if (obuf_len < cb) {
                 obuf_len = (int)cb;
             }
-            void* buf = malloc(obuf_len);
+            void* buf = pyodbc_malloc(obuf_len);
             if (buf == NULL) {
                 return false;
             }

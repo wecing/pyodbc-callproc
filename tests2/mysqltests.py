@@ -654,7 +654,7 @@ class MySqlTestCase(unittest.TestCase):
         self.cursor.execute('''
                             create procedure proc1(out a varchar(30), inout b integer)
                             begin
-                                select version() into a;
+                                select 'nyan nyan nyan' into a;
                                 select (b+1) into b;
                             end
                             ''')
@@ -662,14 +662,14 @@ class MySqlTestCase(unittest.TestCase):
         ver_p = pyodbc.SQLParameter('', pyodbc.SQL_PARAM_OUTPUT)
         v_p = pyodbc.SQLParameter(41, pyodbc.SQL_PARAM_INPUT_OUTPUT)
         r = self.cursor.callproc('proc1', ver_p, v_p)
-        self.assertTrue(re.match(r'[0-9]+\.[0-9]+\.[0-9]+', r[0]))
+        self.assertEquals(r[0], 'nyan nyan nyan')
         self.assertEquals(r[1], 42)
 
     def test_callproc_output_truncate_str(self):
         self.cursor.execute('''
                             create procedure proc1(out a varchar(30), inout b integer)
                             begin
-                                select version() into a;
+                                select 'nyan nyan nyan' into a;
                                 select (b+1) into b;
                             end
                             ''')

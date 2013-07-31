@@ -1240,7 +1240,7 @@ class FreeTDSTestCase(unittest.TestCase):
                                 @b int output
                             as
                             begin
-                                select @a = (select @@VERSION),
+                                select @a = (select 'nyan nyan nyan'),
                                        @b = @b+1;
                                 return;
                             end
@@ -1249,7 +1249,7 @@ class FreeTDSTestCase(unittest.TestCase):
         ver_p = pyodbc.SQLParameter('', pyodbc.SQL_PARAM_OUTPUT)
         v_p = pyodbc.SQLParameter(41, pyodbc.SQL_PARAM_INPUT_OUTPUT)
         r = self.cursor.callproc('proc1', ver_p, v_p)
-        self.assertTrue(r[0].find('Microsoft') >= 0)
+        self.assertEquals(r[0], 'nyan nyan nyan')
         self.assertEquals(r[1], 42)
 
     def test_callproc_output_truncate_str(self):
@@ -1259,7 +1259,7 @@ class FreeTDSTestCase(unittest.TestCase):
                                 @b int output
                             as
                             begin
-                                select @a = (select @@VERSION),
+                                select @a = (select 'nyan nyan nyan'),
                                        @b = @b+1;
                                 return;
                             end

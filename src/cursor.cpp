@@ -862,6 +862,9 @@ static PyObject* Cursor_callproc(PyObject* self, PyObject* args)
     // which is obsolete from Py 3.3(?). So maybe we should remove the macro def in pyodbccompat.h.
 #if PY_VERSION_HEX >= 0x03000000
     PyObject* pCallprocName = PyUnicode_AsASCIIString(pProcName);
+    if (pCallprocName == NULL) {
+        return NULL;
+    }
     PyObject* pCallStatement = PyString_FromFormat("{ CALL %s(%s) }", PyBytes_AsString(pCallprocName), pszParameterList);
     Py_DECREF(pCallprocName);
 #else
